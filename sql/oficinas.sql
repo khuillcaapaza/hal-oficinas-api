@@ -8,6 +8,7 @@
 -- Oficina = ficha informativa (cabecera, contacto, ubicación, contenido).
 CREATE TABLE IF NOT EXISTS oficinas (
   id                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid              CHAR(36)     NULL,
   slug              VARCHAR(160) NOT NULL,
   titulo            VARCHAR(200) NOT NULL,
   categoria         VARCHAR(120) NOT NULL DEFAULT 'Oficina',
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS oficinas (
   creado_en         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   actualizado_en    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_oficinas_uuid (uuid),
   UNIQUE KEY uq_oficinas_slug (slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -45,6 +47,7 @@ CREATE TABLE IF NOT EXISTS oficina_autoridades (
 CREATE TABLE IF NOT EXISTS oficina_secciones (
   id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
   oficina_id   INT UNSIGNED NOT NULL,
+  uuid         CHAR(36)     NULL,
   slug         VARCHAR(160) NOT NULL,   -- también sirve como subcarpeta física por defecto
   titulo       VARCHAR(200) NOT NULL,
   descripcion  VARCHAR(500) NOT NULL DEFAULT '',
@@ -52,6 +55,7 @@ CREATE TABLE IF NOT EXISTS oficina_secciones (
   url_externa  VARCHAR(500) NULL,       -- si está, la sección enlaza fuera
   orden        INT          NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_secciones_uuid (uuid),
   KEY idx_secciones_oficina (oficina_id),
   CONSTRAINT fk_secciones_oficina FOREIGN KEY (oficina_id)
     REFERENCES oficinas(id) ON DELETE CASCADE

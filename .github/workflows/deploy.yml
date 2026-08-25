@@ -1,4 +1,4 @@
-name: Deploy API (hal-servicios-api)
+name: Deploy API (hal-oficinas-api)
 
 on:
   push:
@@ -9,14 +9,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-servicios-api
+  group: deploy-oficinas-api
   cancel-in-progress: false
 
 env:
-  # TODO: crear el subdominio en HestiaCP y ajustar estos valores reales
   # Ruta del dominio relativa al home (acceso SFTP-only)
-  REMOTE_DOMAIN_DIR: web/servicios.hospitalantoniolorena.gob.pe
-  BASE_URL: https://servicios.hospitalantoniolorena.gob.pe
+  REMOTE_DOMAIN_DIR: web/oficinas.hospitalantoniolorena.gob.pe
+  BASE_URL: https://oficinas.hospitalantoniolorena.gob.pe
 
 jobs:
   # Ejecuta los tests (PHPUnit) antes de desplegar. El job de deploy depende de
@@ -87,13 +86,13 @@ jobs:
           APP_SECURE=true
           AUTH_ENABLED=true
           JWT_SECRET=${JWT_SECRET}
-          CORS_ORIGINS=https://hospitalantoniolorena.gob.pe,https://servicios.hospitalantoniolorena.gob.pe
+          CORS_ORIGINS=https://hospitalantoniolorena.gob.pe,https://oficinas.hospitalantoniolorena.gob.pe,https://auth.hospitalantoniolorena.gob.pe
           DB_HOST=localhost
-          DB_NAME=${DB_NAME:-haladminweb_servicios_db}
+          DB_NAME=${DB_NAME:-haladminweb_oficinas_bd}
           DB_USER=${DB_USER}
           DB_PASS=${DB_PASS}
           FILES_API_BASE_URL=https://archivos.hospitalantoniolorena.gob.pe/files-api
-          ARCHIVOS_BASE_URL=https://hospitalantoniolorena.gob.pe/servicios
+          ARCHIVOS_BASE_URL=https://archivos.hospitalantoniolorena.gob.pe/oficinas
           ENVEOF
 
       - name: Configurar clave SSH

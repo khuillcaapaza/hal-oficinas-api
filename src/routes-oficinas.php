@@ -17,6 +17,7 @@ return function (App $app): void {
     $app->get('/oficinas/{slug}', [OficinaController::class, 'show']);
 
     // Administración de oficinas (requiere JWT).
+    // La referencia del path acepta slug histórico o uuid interno.
     $app->get('/admin/oficinas', [OficinaController::class, 'adminIndex']);
     $app->put('/admin/oficinas/reordenar', [OficinaController::class, 'reorder']);
     $app->get('/admin/oficinas/{slug}', [OficinaController::class, 'adminShow']);

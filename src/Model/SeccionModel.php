@@ -6,6 +6,7 @@ namespace App\Model;
 
 use App\Support\Database;
 use PDO;
+use PDOException;
 
 /**
  * Acceso a datos de las secciones de una oficina (tabla oficina_secciones):
@@ -14,6 +15,7 @@ use PDO;
 class SeccionModel
 {
     private PDO $pdo;
+    private ?bool $uuidDisponible = null;
 
     public function __construct(?PDO $pdo = null)
     {
@@ -57,12 +59,7 @@ class SeccionModel
     /** Inserta una sección. Devuelve el id nuevo. */
     public function crear(int $oficinaId, array $s): int
     {
-        $stmt = $this->pdo->prepare(
-            'INSERT INTO oficina_secciones
-                (oficina_id, slug, titulo, descripcion, icono, url_externa, orden)
-             VALUES (:oid, :slug, :titulo, :descripcion, :icono, :url_externa, :orden)'
-        );
-        $stmt->execute([
+        $params = [
             'oid'         => $oficinaId,
             'slug'        => $s['slug'],
             'titulo'      => $s['titulo'],
@@ -70,7 +67,38 @@ class SeccionModel
             'icono'       => $s['icono'],
             'url_externa' => $s['url_externa'],
             'orden'       => $s['orden'],
-        ]);
+        ];
+
+        if (array_key_exists('uuid', $s) && (string) $s['uuid'] !== '') {
+            try {
+                $stmt = $this->pdo->prepare(
+                    'INSERT INTO oficina_secciones
+                        (oficina_id, uuid, slug, titulo, descripcion, icono, url_externa, orden)
+                     VALUES (:oid, :uuid, :slug, :titulo, :descripcion, :icono, :url_externa, :orden)'
+                );
+                $stmt->execute($params + ['uuid' => $s['uuid']]);
+            } catch (PDOException $e) {
+                // Compatibilidad temporal: si la BD aún no tiene la columna uuid,
+                // degradar al INSERT legacy sin romper el flujo del panel.
+                if (($e->getCode() !== '42S22') || stripos($e->getMessage(), 'uuid') === false) {
+                    throw $e;
+                }
+
+                $stmt = $this->pdo->prepare(
+                    'INSERT INTO oficina_secciones
+                        (oficina_id, slug, titulo, descripcion, icono, url_externa, orden)
+                     VALUES (:oid, :slug, :titulo, :descripcion, :icono, :url_externa, :orden)'
+                );
+                $stmt->execute($params);
+            }
+        } else {
+            $stmt = $this->pdo->prepare(
+                'INSERT INTO oficina_secciones
+                    (oficina_id, slug, titulo, descripcion, icono, url_externa, orden)
+                 VALUES (:oid, :slug, :titulo, :descripcion, :icono, :url_externa, :orden)'
+            );
+            $stmt->execute($params);
+        }
 
         return (int) $this->pdo->lastInsertId();
     }
@@ -117,6 +145,7 @@ class SeccionModel
     {
         return [
             'id'          => (int) $row['id'],
+            'uuid'        => (string) ($row['uuid'] ?? ''),
             'slug'        => $row['slug'],
             'titulo'      => $row['titulo'],
             'descripcion' => $row['descripcion'],
@@ -124,5 +153,17 @@ class SeccionModel
             'url_externa' => $row['url_externa'],
             'orden'       => (int) $row['orden'],
         ];
+    }
+
+    private function usaUuid(): bool
+    {
+        if ($this->uuidDisponible !== null) {
+            return $this->uuidDisponible;
+        }
+
+        $stmt = $this->pdo->query("SHOW COLUMNS FROM oficina_secciones LIKE 'uuid'");
+        $this->uuidDisponible = $stmt !== false && $stmt->fetch() !== false;
+
+        return $this->uuidDisponible;
     }
 }

@@ -101,21 +101,28 @@ final class OficinaController extends Controller
         }
 
         $normalizados  = [];
-        $slugsVistos   = [];
+        $soloSlugs     = true;
+        $slugsLegacy   = [];
+        $refsVistas    = [];
         $ordenesVistas = [];
         foreach ($items as $it) {
             if (!is_array($it)) {
                 return $this->json($response, ['error' => 'Formato de item inválido.'], 422);
             }
 
+            $uuid = trim((string) ($it['uuid'] ?? ''));
             $slug = trim((string) ($it['slug'] ?? ''));
-            if ($slug === '') {
-                return $this->json($response, ['error' => 'Cada item debe incluir un slug válido.'], 422);
+            $ref = $uuid !== '' ? $uuid : $slug;
+            if ($ref === '') {
+                return $this->json($response, ['error' => 'Cada item debe incluir uuid o slug.'], 422);
             }
-            if (isset($slugsVistos[$slug])) {
-                return $this->json($response, ['error' => 'No se permiten slugs duplicados en el reordenamiento.'], 422);
+            if ($uuid !== '') {
+                $soloSlugs = false;
             }
-            $slugsVistos[$slug] = true;
+            if (isset($refsVistas[$ref])) {
+                return $this->json($response, ['error' => 'No se permiten referencias duplicadas en el reordenamiento.'], 422);
+            }
+            $refsVistas[$ref] = true;
 
             $orden = (int) ($it['orden'] ?? -1);
             if ($orden < 0) {
@@ -126,10 +133,17 @@ final class OficinaController extends Controller
             }
             $ordenesVistas[$orden] = true;
 
-            $normalizados[] = ['slug' => $slug, 'orden' => $orden];
+            $normalizados[] = ['ref' => $ref, 'orden' => $orden];
+            if ($slug !== '') {
+                $slugsLegacy[] = ['slug' => $slug, 'orden' => $orden];
+            }
         }
 
-        [$ok, $faltantes] = $this->oficinas->reordenar($normalizados);
+        if ($soloSlugs && count($slugsLegacy) === count($normalizados)) {
+            [$ok, $faltantes] = $this->oficinas->reordenar($slugsLegacy);
+        } else {
+            [$ok, $faltantes] = $this->oficinas->reordenarPorReferencia($normalizados);
+        }
         if (!$ok) {
             return $this->json($response, [
                 'error'     => 'No se pudo completar el reordenamiento.',
@@ -140,10 +154,10 @@ final class OficinaController extends Controller
         return $this->json($response, ['ok' => true]);
     }
 
-    /** GET /admin/oficinas/{slug} — oficina completa con autoridades, secciones y enlaces. */
+    /** GET /admin/oficinas/{slug|uuid} — oficina completa con autoridades, secciones y enlaces. */
     public function adminShow(Request $request, Response $response, array $args): Response
     {
-        $of = $this->oficinas->porSlug((string) $args['slug']);
+        $of = $this->resolverOficina((string) $args['slug']);
         if ($of === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
@@ -160,6 +174,11 @@ final class OficinaController extends Controller
     {
         $body = (array) $request->getParsedBody();
 
+        $uuid = $this->generarUuidV4();
+        if (trim((string) ($body['slug'] ?? '')) === '') {
+            $body['slug'] = 'oficina-' . substr(str_replace('-', '', $uuid), 0, 8);
+        }
+
         [$campos, $error] = $this->validarOficina($body);
         if ($error !== null) {
             return $this->json($response, ['error' => $error], 422);
@@ -169,46 +188,84 @@ final class OficinaController extends Controller
             return $this->json($response, ['error' => 'Ya existe una oficina con ese slug.'], 409);
         }
 
+        $campos['uuid'] = $uuid;
+
         $autoridades = $campos['autoridades'];
         unset($campos['autoridades']);
 
         $id = $this->oficinas->crear($campos);
         $this->autoridades->reemplazar($id, $autoridades);
 
-        return $this->json($response, ['ok' => true, 'slug' => $campos['slug']], 201);
+        return $this->json($response, ['ok' => true, 'uuid' => $campos['uuid'], 'slug' => $campos['slug']], 201);
     }
 
-    /** PUT /admin/oficinas/{slug} — actualizar oficina. */
+    /** PUT /admin/oficinas/{slug|uuid} — actualizar oficina. */
     public function update(Request $request, Response $response, array $args): Response
     {
-        $slug = (string) $args['slug'];
-        $body = (array) $request->getParsedBody();
+        $ref = (string) $args['slug'];
+        $of  = $this->resolverOficina($ref);
 
-        [$campos, $error] = $this->validarOficina($body, $slug);
+        // Compatibilidad: si aún llega slug y no se pudo resolver por referencia,
+        // conserva el flujo histórico por slug.
+        if ($of === null && !$this->esUuid($ref)) {
+            $body = (array) $request->getParsedBody();
+            $body['slug'] = $ref;
+
+            [$campos, $error] = $this->validarOficina($body);
+            if ($error !== null) {
+                return $this->json($response, ['error' => $error], 422);
+            }
+
+            $autoridades = $campos['autoridades'];
+            unset($campos['autoridades']);
+
+            if (!$this->oficinas->actualizar($ref, $campos)) {
+                return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
+            }
+
+            $id = $this->oficinas->idPorSlug($ref);
+            if ($id !== null) {
+                $this->autoridades->reemplazar($id, $autoridades);
+            }
+
+            return $this->json($response, ['ok' => true, 'slug' => $ref]);
+        }
+
+        if ($of === null) {
+            return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
+        }
+
+        $body = (array) $request->getParsedBody();
+        if (trim((string) ($body['slug'] ?? '')) === '') {
+            $body['slug'] = $of['slug'];
+        }
+
+        [$campos, $error] = $this->validarOficina($body);
         if ($error !== null) {
             return $this->json($response, ['error' => $error], 422);
+        }
+
+        if ($campos['slug'] !== $of['slug'] && $this->oficinas->existeSlug($campos['slug'])) {
+            return $this->json($response, ['error' => 'Ya existe una oficina con ese slug.'], 409);
         }
 
         $autoridades = $campos['autoridades'];
         unset($campos['autoridades']);
 
-        if (!$this->oficinas->actualizar($slug, $campos)) {
+        if (!$this->oficinas->actualizarPorId((int) $of['id'], $campos)) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
 
-        $id = $this->oficinas->idPorSlug($slug);
-        if ($id !== null) {
-            $this->autoridades->reemplazar($id, $autoridades);
-        }
+        $this->autoridades->reemplazar((int) $of['id'], $autoridades);
 
-        return $this->json($response, ['ok' => true, 'slug' => $slug]);
+        return $this->json($response, ['ok' => true, 'uuid' => $of['uuid'], 'slug' => $campos['slug']]);
     }
 
-    /** DELETE /admin/oficinas/{slug} — eliminar oficina + autoridades + secciones + enlaces. */
+    /** DELETE /admin/oficinas/{slug|uuid} — eliminar oficina + autoridades + secciones + enlaces. */
     public function destroy(Request $request, Response $response, array $args): Response
     {
-        $slug = (string) $args['slug'];
-        $id   = $this->oficinas->idPorSlug($slug);
+        $ref = (string) $args['slug'];
+        $id  = $this->resolverOficinaId($ref);
         if ($id === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
@@ -216,36 +273,47 @@ final class OficinaController extends Controller
         $auth       = $request->getHeaderLine('Authorization');
         $noBorrados = $this->relayArchivos($this->enlaces->archivosManagedDeOficina($id), $auth);
 
-        $this->oficinas->eliminar($slug);
+        if ($this->esUuid($ref)) {
+            $this->oficinas->eliminarPorId($id);
+        } else {
+            $this->oficinas->eliminar($ref);
+        }
 
         return $this->json($response, $this->conAdvertencia($noBorrados));
     }
 
     // ── Administración de secciones ───────────────────────────────────
 
-    /** POST /admin/oficinas/{slug}/secciones — crear sección. */
+    /** POST /admin/oficinas/{slug|uuid}/secciones — crear sección. */
     public function storeSeccion(Request $request, Response $response, array $args): Response
     {
-        $id = $this->oficinas->idPorSlug((string) $args['slug']);
+        $id = $this->resolverOficinaId((string) $args['slug']);
         if ($id === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
 
-        [$campos, $error] = $this->validarSeccion((array) $request->getParsedBody());
+        $raw = (array) $request->getParsedBody();
+        $uuid = $this->generarUuidV4();
+        if (trim((string) ($raw['slug'] ?? '')) === '') {
+            $raw['slug'] = 'seccion-' . substr(str_replace('-', '', $uuid), 0, 8);
+        }
+
+        [$campos, $error] = $this->validarSeccion($raw);
         if ($error !== null) {
             return $this->json($response, ['error' => $error], 422);
         }
 
+        $campos['uuid'] = $uuid;
         $campos['orden'] = $this->secciones->siguienteOrden($id);
         $nuevoId         = $this->secciones->crear($id, $campos);
 
-        return $this->json($response, ['ok' => true, 'id' => $nuevoId], 201);
+        return $this->json($response, ['ok' => true, 'id' => $nuevoId, 'uuid' => $uuid], 201);
     }
 
     /** PUT /admin/oficinas/{slug}/secciones/{id} — actualizar sección. */
     public function updateSeccion(Request $request, Response $response, array $args): Response
     {
-        $id = $this->oficinas->idPorSlug((string) $args['slug']);
+        $id = $this->resolverOficinaId((string) $args['slug']);
         if ($id === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
@@ -270,7 +338,7 @@ final class OficinaController extends Controller
     /** DELETE /admin/oficinas/{slug}/secciones/{id} — eliminar sección + sus enlaces. */
     public function destroySeccion(Request $request, Response $response, array $args): Response
     {
-        $id = $this->oficinas->idPorSlug((string) $args['slug']);
+        $id = $this->resolverOficinaId((string) $args['slug']);
         if ($id === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
@@ -293,7 +361,7 @@ final class OficinaController extends Controller
     /** POST /admin/oficinas/{slug}/enlaces — registrar un enlace (opcional seccion_id). */
     public function storeEnlace(Request $request, Response $response, array $args): Response
     {
-        $id = $this->oficinas->idPorSlug((string) $args['slug']);
+        $id = $this->resolverOficinaId((string) $args['slug']);
         if ($id === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
@@ -318,7 +386,7 @@ final class OficinaController extends Controller
     /** PUT /admin/oficinas/{slug}/enlaces/{id} — actualizar título/fecha/orden/publicado. */
     public function updateEnlace(Request $request, Response $response, array $args): Response
     {
-        $id = $this->oficinas->idPorSlug((string) $args['slug']);
+        $id = $this->resolverOficinaId((string) $args['slug']);
         if ($id === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
@@ -354,7 +422,7 @@ final class OficinaController extends Controller
     /** DELETE /admin/oficinas/{slug}/enlaces/{id} — borrar enlace (+ relay si archivo managed). */
     public function destroyEnlace(Request $request, Response $response, array $args): Response
     {
-        $id = $this->oficinas->idPorSlug((string) $args['slug']);
+        $id = $this->resolverOficinaId((string) $args['slug']);
         if ($id === null) {
             return $this->json($response, ['error' => 'Oficina no encontrada'], 404);
         }
@@ -393,6 +461,7 @@ final class OficinaController extends Controller
         unset($sec);
 
         return [
+            'uuid'              => (string) ($of['uuid'] ?? ''),
             'slug'              => $of['slug'],
             'titulo'            => $of['titulo'],
             'categoria'         => $of['categoria'],
@@ -414,19 +483,15 @@ final class OficinaController extends Controller
     // ── Validación / normalización ────────────────────────────────────
 
     /** Valida el cuerpo de creación/edición de oficina. Devuelve [campos, error]. */
-    private function validarOficina(array $data, ?string $slugFijo = null): array
+    private function validarOficina(array $data): array
     {
         $titulo = trim((string) ($data['titulo'] ?? ''));
         if ($titulo === '') {
             return [null, 'El título es obligatorio.'];
         }
 
-        if ($slugFijo !== null) {
-            $slug = $slugFijo;
-        } else {
-            $slug = trim((string) ($data['slug'] ?? ''));
-            $slug = $slug !== '' ? $this->slugify($slug) : $this->slugify($titulo);
-        }
+        $slug = trim((string) ($data['slug'] ?? ''));
+        $slug = $slug !== '' ? $this->slugify($slug) : '';
         if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug)) {
             return [null, 'El slug resultante no es válido.'];
         }
@@ -496,7 +561,7 @@ final class OficinaController extends Controller
         }
 
         $slug = trim((string) ($data['slug'] ?? ''));
-        $slug = $slug !== '' ? $this->slugify($slug) : $this->slugify($titulo);
+        $slug = $slug !== '' ? $this->slugify($slug) : '';
         if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug)) {
             return [null, 'El slug de la sección no es válido.'];
         }
@@ -612,6 +677,36 @@ final class OficinaController extends Controller
         }
 
         return checkdate((int) $m[2], (int) $m[3], (int) $m[1]);
+    }
+
+    private function resolverOficina(string $ref): ?array
+    {
+        return $this->oficinas->porReferencia($ref) ?? $this->oficinas->porSlug($ref);
+    }
+
+    private function resolverOficinaId(string $ref): ?int
+    {
+        $id = $this->oficinas->idPorReferencia($ref);
+        if ($id !== null && $id > 0) {
+            return $id;
+        }
+
+        return $this->oficinas->idPorSlug($ref);
+    }
+
+    private function esUuid(string $value): bool
+    {
+        return (bool) preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $value);
+    }
+
+    /** UUID v4 para usar identificadores internos estables. */
+    private function generarUuidV4(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 
     /** Convierte un texto a slug (minúsculas, sin tildes, separado por guiones). */
