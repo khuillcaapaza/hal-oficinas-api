@@ -1,0 +1,33 @@
+{
+    "name": "hal/hal-oficinas-api",
+    "description": "API Slim 4 (PHP + MySQL) para la gestión de oficinas del Hospital Antonio Lorena",
+    "type": "project",
+    "require": {
+        "php": "^8.1",
+        "jimtools/jwt-auth": "^3.0",
+        "slim/psr7": "^1.6",
+        "slim/slim": "^4",
+        "tuupola/cors-middleware": "^1.4",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test:coverage": "phpunit --coverage-text --coverage-html coverage"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
