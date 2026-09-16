@@ -86,7 +86,7 @@ jobs:
           APP_SECURE=true
           AUTH_ENABLED=true
           JWT_SECRET=${JWT_SECRET}
-          CORS_ORIGINS=https://hospitalantoniolorena.gob.pe,https://oficinas.hospitalantoniolorena.gob.pe,https://auth.hospitalantoniolorena.gob.pe
+          CORS_ORIGINS=https://hospitalantoniolorena.gob.pe,https://www.hospitalantoniolorena.gob.pe,https://oficinas.hospitalantoniolorena.gob.pe,https://auth.hospitalantoniolorena.gob.pe
           DB_HOST=localhost
           DB_NAME=${DB_NAME:-haladminweb_oficinas_bd}
           DB_USER=${DB_USER}
