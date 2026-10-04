@@ -80,6 +80,9 @@ jobs:
           # Valores no-secretos como literales; secretos desde GitHub Secrets.
           # Con solo APP_BASE_PATH=/api ya pasa el health check; el resto habilita
           # BD y validación JWT cuando configures los secrets.
+          test -n "$DB_USER" || { echo "Falta configurar el secreto DB_USER" >&2; exit 1; }
+          test -n "$DB_PASS" || { echo "Falta configurar el secreto DB_PASS" >&2; exit 1; }
+          test -n "$DB_NAME" || { echo "Falta configurar el secreto DB_NAME" >&2; exit 1; }
           cat > env.production <<ENVEOF
           APP_DEBUG=false
           APP_BASE_PATH=/api
@@ -88,7 +91,7 @@ jobs:
           JWT_SECRET=${JWT_SECRET}
           CORS_ORIGINS=https://hospitalantoniolorena.gob.pe,https://www.hospitalantoniolorena.gob.pe,https://oficinas.hospitalantoniolorena.gob.pe,https://auth.hospitalantoniolorena.gob.pe
           DB_HOST=localhost
-          DB_NAME=${DB_NAME:-haladminweb_oficinas_bd}
+          DB_NAME=${DB_NAME}
           DB_USER=${DB_USER}
           DB_PASS=${DB_PASS}
           FILES_API_BASE_URL=https://archivos.hospitalantoniolorena.gob.pe/files-api
@@ -129,4 +132,7 @@ jobs:
           curl -k -fsS "$BASE_URL/api/unpack.php?token=$UNPACK_TOKEN"
           echo "Comprobando /api/health..."
           curl -k -fsS "$BASE_URL/api/health"
+          echo
+          echo "Comprobando conexión de base de datos..."
+          curl -k -fsS "$BASE_URL/api/oficinas"
           echo
